@@ -1,9 +1,9 @@
-module github.com/ingentingalls/rofi-bt
+module github.com/andree-bjorkgard/rofi-bt
 
 go 1.21.5
 
 require (
-	github.com/ingentingalls/rofi v0.2.0
+	github.com/andree-bjorkgard/rofi v0.2.1
 	github.com/muka/go-bluetooth v0.0.0-20221213043340-85dc80edc4e1
 	github.com/sirupsen/logrus v1.6.0
 )
