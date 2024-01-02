@@ -3,7 +3,7 @@ module github.com/ingentingalls/rofi-bt
 go 1.21.5
 
 require (
-	github.com/ingentingalls/rofi v0.1.0
+	github.com/ingentingalls/rofi v0.2.0
 	github.com/muka/go-bluetooth v0.0.0-20221213043340-85dc80edc4e1
 	github.com/sirupsen/logrus v1.6.0
 )

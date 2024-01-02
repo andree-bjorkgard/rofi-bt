@@ -14,6 +14,7 @@ import (
 )
 
 const appName = "Bluetooth"
+const deviceCacheName = "bluetooth-devices"
 
 func main() {
 	model, eventCh := rofi.NewRofiBlock()
@@ -42,7 +43,7 @@ func main() {
 
 	devUpdateCh := make(chan string)
 
-	var opts rofi.Options
+	var opts []rofi.Option
 	for _, device := range devices {
 		dev := device
 		trusted, err := dev.GetTrusted()
@@ -80,7 +81,7 @@ func main() {
 		}
 	}
 
-	model.Options = opts
+	model.Options = rofi.SortUsingHistory(opts, deviceCacheName)
 	model.Render()
 
 	for {
@@ -91,6 +92,9 @@ func main() {
 			if err != nil {
 				model.Message = fmt.Sprintf("Error getting device \"%s\": %s", v.Value, err)
 			}
+
+			rofi.SaveToHistory(deviceCacheName, v.Value)
+
 			switch v.Cmd {
 			case "connect":
 				sendNotification(fmt.Sprintf("Connecting to device \"%s\"", device.Properties.Alias))
