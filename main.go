@@ -2,19 +2,24 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/andree-bjorkgard/rofi"
 	"github.com/muka/go-bluetooth/api"
 	"github.com/muka/go-bluetooth/bluez"
+	"github.com/muka/go-bluetooth/bluez/profile/battery"
 	"github.com/muka/go-bluetooth/bluez/profile/device"
 	"github.com/sirupsen/logrus"
 )
 
 const appName = "Bluetooth"
 const deviceCacheName = "bluetooth-devices"
+
+const BATTERY_UUID = "0000180f-0000-1000-8000-00805f9b34fb"
 
 func main() {
 	model, eventCh := rofi.NewRofiBlock()
@@ -69,9 +74,7 @@ func main() {
 					change := <-devCh
 
 					switch change.Name {
-					case "Connected":
-						fallthrough
-					case "Disconnected":
+					case "Connected", "Disconnected":
 						devUpdateCh <- dev.Properties.Address
 					default:
 					}
@@ -103,7 +106,14 @@ func main() {
 					model.Message = fmt.Sprintf("Error connecting to device \"%s\": %s", device.Properties.Alias, err)
 					continue
 				}
-				sendNotification(fmt.Sprintf("Connected to device \"%s\"", device.Properties.Alias))
+
+				// wait for connection to be established so the battery service is available
+				time.Sleep(time.Second)
+				if b := getBatteryLabel(device); b != "" {
+					sendNotification(fmt.Sprintf("Connected to device \"%s\"\n%s", device.Properties.Alias, b))
+				} else {
+					sendNotification(fmt.Sprintf("Connected to device \"%s\"", device.Properties.Alias))
+				}
 			case "disconnect":
 				sendNotification(fmt.Sprintf("Disconnecting device \"%s\"", device.Properties.Alias))
 				err = device.Disconnect()
@@ -113,7 +123,14 @@ func main() {
 				}
 				sendNotification(fmt.Sprintf("Disconnected from device \"%s\"", device.Properties.Alias))
 			default:
-				return
+				continue
+			}
+
+			for i, opt := range model.Options {
+				if device.Properties.Address == opt.Value {
+					model.Options[i] = createOption(device)
+					break
+				}
 			}
 
 		case v := <-devUpdateCh:
@@ -129,33 +146,67 @@ func main() {
 				}
 			}
 
-			model.Render()
 		}
+		model.Render()
 	}
 }
 
 func createOption(dev *device.Device1) rofi.Option {
-	baseCmd := "connect"
-	if dev.Properties.Connected {
-		baseCmd = "disconnect"
-	}
-
 	states := []string{}
-	if dev.Properties.Paired {
-		states = append(states, "Paired")
+	batteryLabel := ""
 
+	baseCmd := "connect"
+	connected, err := dev.GetConnected()
+	if err != nil {
+		log.Println("Error getting connected state:", err)
+		return rofi.Option{}
 	}
-	if dev.Properties.Trusted {
+	if connected {
+		baseCmd = "disconnect"
+		batteryLabel = getBatteryLabel(dev)
+	}
+
+	paired, err := dev.GetPaired()
+	if err != nil {
+		log.Println("Error getting paired state:", err)
+		return rofi.Option{}
+	}
+	if paired {
+		states = append(states, "Paired")
+	}
+
+	trusted, err := dev.GetTrusted()
+	if err != nil {
+		log.Println("Error getting trusted state:", err)
+		return rofi.Option{}
+	}
+	if trusted {
 		states = append(states, "Trusted")
 	}
 
-	opt := rofi.Option{
-		Label:    formatLabel(dev),
-		Category: fmt.Sprintf("<span size=\"small\" color=\"#C3C3C3\">%s</span>", strings.Join(states, ", ")),
-		Value:    dev.Properties.Address,
-		Icon:     dev.Properties.Icon,
-		Cmds:     []string{baseCmd, "controls"},
+	address, err := dev.GetAddress()
+	if err != nil {
+		log.Println("Error getting address:", err)
+		return rofi.Option{}
+	}
 
+	icon, err := dev.GetIcon()
+	if err != nil {
+		log.Println("Error getting icon:", err)
+		return rofi.Option{}
+	}
+
+	category := fmt.Sprintf("<span size=\"small\" color=\"#C3C3C3\">%s</span>", strings.Join(states, ", "))
+	if batteryLabel != "" {
+		category += fmt.Sprintf("\n<span size=\"small\" color=\"#C3C3C3\">%s</span>", batteryLabel)
+	}
+
+	opt := rofi.Option{
+		Label:       formatLabel(dev),
+		Category:    category,
+		Value:       address,
+		Icon:        icon,
+		Cmds:        []string{baseCmd, "controls"},
 		IsMultiline: true,
 		UseMarkup:   true,
 	}
@@ -164,11 +215,54 @@ func createOption(dev *device.Device1) rofi.Option {
 
 func formatLabel(device *device.Device1) string {
 	label := "\uf0c1  "
-	if !device.Properties.Connected {
+	connected, err := device.GetConnected()
+	if err != nil {
+		log.Println("Error getting connected status:", err)
+		return ""
+	}
+	if !connected {
 		label = "\uf127  "
 	}
-	label += device.Properties.Alias
+	alias, err := device.GetAlias()
+	if err != nil {
+		log.Println("Error getting alias:", err)
+		return ""
+	}
+	label += alias
 	return label
+}
+
+func getBatteryLabel(dev *device.Device1) string {
+	for _, uuid := range dev.Properties.UUIDs {
+		if uuid == BATTERY_UUID {
+			b, err := battery.NewBattery1(dev.Path())
+			if err != nil {
+				log.Println("Error getting battery service:", err)
+				return ""
+			}
+			p, err := b.GetPercentage()
+			if err != nil {
+				log.Println("Error getting battery percentage:", err)
+				return ""
+			}
+			icon := "\uf240"
+			switch {
+			case p >= 90:
+				icon = "\uf240"
+			case p >= 70:
+				icon = "\uf241"
+			case p >= 50:
+				icon = "\uf242"
+			case p >= 30:
+				icon = "\uf243"
+			default:
+				icon = "\uf244"
+			}
+			return fmt.Sprintf("%s   %d%%", icon, p)
+		}
+	}
+
+	return ""
 }
 
 func sendNotification(message string) {
