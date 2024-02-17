@@ -5,9 +5,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
+	rbt "github.com/andree-bjorkgard/remote-bluetooth/pkg/client"
+	rconfig "github.com/andree-bjorkgard/remote-bluetooth/pkg/config"
 	"github.com/andree-bjorkgard/rofi"
 	"github.com/muka/go-bluetooth/api"
 	"github.com/muka/go-bluetooth/bluez"
@@ -20,6 +23,15 @@ const appName = "Bluetooth"
 const deviceCacheName = "bluetooth-devices"
 
 const BATTERY_UUID = "0000180f-0000-1000-8000-00805f9b34fb"
+
+type BtDevice interface {
+	GetAlias() (string, error)
+	GetAddress() (string, error)
+	GetTrusted() (bool, error)
+	GetPaired() (bool, error)
+	GetConnected() (bool, error)
+	GetIcon() (string, error)
+}
 
 func main() {
 	model, eventCh := rofi.NewRofiBlock()
@@ -35,6 +47,11 @@ func main() {
 		model.Render()
 		return
 	}
+
+	rcfg := rconfig.NewConfig()
+	rclient := rbt.NewClient(rcfg)
+
+	go rclient.FindServers()
 
 	devices, err := adapter.GetDevices()
 	if err != nil {
@@ -87,48 +104,97 @@ func main() {
 	model.Options = rofi.SortUsingHistory(opts, deviceCacheName)
 	model.Render()
 
+	remoteDevices := map[string]*rbt.Device{}
 	for {
 		select {
 
-		case v := <-eventCh:
-			device, err := adapter.GetDeviceByAddress(v.Value)
-			if err != nil {
-				model.Message = fmt.Sprintf("Error getting device \"%s\": %s", v.Value, err)
+		case de := <-rclient.GetDeviceEventsChannel():
+			devAddr := fmt.Sprintf("%s/%s", de.Device.Host, de.Device.Address)
+			remoteDevices[devAddr] = de.Device
+			exists := false
+			for i, opt := range model.Options {
+				if opt.Value == devAddr {
+					model.Options[i] = createOption(de.Device)
+					exists = true
+					break
+				}
 			}
 
-			rofi.SaveToHistory(deviceCacheName, v.Value)
+			if !exists {
+				model.Options = append(model.Options, createOption(de.Device))
+			}
 
-			switch v.Cmd {
-			case "connect":
-				sendNotification(fmt.Sprintf("Connecting to device \"%s\"", device.Properties.Alias))
-				err = device.Connect()
+		case v := <-eventCh:
+			var dev BtDevice
+
+			// remote device connect/disconnect
+			if s := strings.Split(v.Value, "/"); len(s) > 1 {
+				device := remoteDevices[v.Value]
+				switch v.Cmd {
+				case "connect":
+					sendNotification(fmt.Sprintf("Remotely connecting to device \"%s\"", device.Name))
+					if err := rclient.ConnectToDevice(s[0], s[1]); err != nil {
+						model.Message = fmt.Sprintf("Error connecting to device \"%s\": %s", v.Value, err)
+						continue
+					}
+					device.Connected = true
+					sendNotification(fmt.Sprintf("Remotely connected to device \"%s\"", device.Name))
+
+				case "disconnect":
+					sendNotification(fmt.Sprintf("Remotely disconnecting from device \"%s\"", device.Name))
+					if err := rclient.DisconnectFromDevice(s[0], s[1]); err != nil {
+						model.Message = fmt.Sprintf("Error disconnecting from device \"%s\": %s", v.Value, err)
+						continue
+					}
+					device.Connected = false
+					sendNotification(fmt.Sprintf("Remotely disconnected from device \"%s\"", device.Name))
+				}
+
+				dev = device
+
+				// local device connect/disconnect
+			} else {
+				device, err := adapter.GetDeviceByAddress(v.Value)
 				if err != nil {
-					model.Message = fmt.Sprintf("Error connecting to device \"%s\": %s", device.Properties.Alias, err)
+					model.Message = fmt.Sprintf("Error getting device \"%s\": %s", v.Value, err)
+				}
+
+				rofi.SaveToHistory(deviceCacheName, v.Value)
+
+				switch v.Cmd {
+				case "connect":
+					sendNotification(fmt.Sprintf("Connecting to device \"%s\"", device.Properties.Alias))
+					err = device.Connect()
+					if err != nil {
+						model.Message = fmt.Sprintf("Error connecting to device \"%s\": %s", device.Properties.Alias, err)
+						continue
+					}
+
+					// wait for connection to be established so the battery service is available
+					time.Sleep(time.Second)
+					if b := getBatteryStatus(device); b != "" {
+						sendNotification(fmt.Sprintf("Connected to device \"%s\"\n%s", device.Properties.Alias, b))
+					} else {
+						sendNotification(fmt.Sprintf("Connected to device \"%s\"", device.Properties.Alias))
+					}
+				case "disconnect":
+					sendNotification(fmt.Sprintf("Disconnecting device \"%s\"", device.Properties.Alias))
+					err = device.Disconnect()
+					if err != nil {
+						model.Message = fmt.Sprintf("Error disconnecting device \"%s\": %s", device.Properties.Alias, err)
+						continue
+					}
+					sendNotification(fmt.Sprintf("Disconnected from device \"%s\"", device.Properties.Alias))
+				default:
 					continue
 				}
 
-				// wait for connection to be established so the battery service is available
-				time.Sleep(time.Second)
-				if b := getBatteryLabel(device); b != "" {
-					sendNotification(fmt.Sprintf("Connected to device \"%s\"\n%s", device.Properties.Alias, b))
-				} else {
-					sendNotification(fmt.Sprintf("Connected to device \"%s\"", device.Properties.Alias))
-				}
-			case "disconnect":
-				sendNotification(fmt.Sprintf("Disconnecting device \"%s\"", device.Properties.Alias))
-				err = device.Disconnect()
-				if err != nil {
-					model.Message = fmt.Sprintf("Error disconnecting device \"%s\": %s", device.Properties.Alias, err)
-					continue
-				}
-				sendNotification(fmt.Sprintf("Disconnected from device \"%s\"", device.Properties.Alias))
-			default:
-				continue
+				dev = device
 			}
 
 			for i, opt := range model.Options {
-				if device.Properties.Address == opt.Value {
-					model.Options[i] = createOption(device)
+				if v.Value == opt.Value {
+					model.Options[i] = createOption(dev)
 					break
 				}
 			}
@@ -151,8 +217,7 @@ func main() {
 	}
 }
 
-func createOption(dev *device.Device1) rofi.Option {
-	states := []string{}
+func createOption(dev BtDevice) rofi.Option {
 	batteryLabel := ""
 
 	baseCmd := "connect"
@@ -161,27 +226,16 @@ func createOption(dev *device.Device1) rofi.Option {
 		log.Println("Error getting connected state:", err)
 		return rofi.Option{}
 	}
+
 	if connected {
 		baseCmd = "disconnect"
-		batteryLabel = getBatteryLabel(dev)
-	}
-
-	paired, err := dev.GetPaired()
-	if err != nil {
-		log.Println("Error getting paired state:", err)
-		return rofi.Option{}
-	}
-	if paired {
-		states = append(states, "Paired")
-	}
-
-	trusted, err := dev.GetTrusted()
-	if err != nil {
-		log.Println("Error getting trusted state:", err)
-		return rofi.Option{}
-	}
-	if trusted {
-		states = append(states, "Trusted")
+		switch v := dev.(type) {
+		case *device.Device1:
+			batteryLabel = getBatteryStatus(v)
+		case *rbt.Device:
+			status, _ := v.GetBatteryStatus()
+			batteryLabel = status
+		}
 	}
 
 	address, err := dev.GetAddress()
@@ -196,24 +250,33 @@ func createOption(dev *device.Device1) rofi.Option {
 		return rofi.Option{}
 	}
 
-	category := fmt.Sprintf("<span size=\"small\" color=\"#C3C3C3\">%s</span>", strings.Join(states, ", "))
+	var info []string
+	switch v := dev.(type) {
+	case *device.Device1:
+		info = append(info, fmt.Sprintf("<span size=\"small\" color=\"#C3C3C3\">%s</span>", address))
+	case *rbt.Device:
+		info = append(info, fmt.Sprintf("<span size=\"small\" color=\"#C3C3C3\">%s/%s</span>", v.Host, address))
+		address = fmt.Sprintf("%s/%s", v.Host, address)
+	}
+
 	if batteryLabel != "" {
-		category += fmt.Sprintf("\n<span size=\"small\" color=\"#C3C3C3\">%s</span>", batteryLabel)
+		info = append(info, fmt.Sprintf("<span size=\"small\" color=\"#C3C3C3\">%s</span>", getBatteryLabel(batteryLabel)))
 	}
 
 	opt := rofi.Option{
 		Label:       formatLabel(dev),
-		Category:    category,
+		Info:        info,
 		Value:       address,
 		Icon:        icon,
 		Cmds:        []string{baseCmd, "controls"},
 		IsMultiline: true,
 		UseMarkup:   true,
 	}
+
 	return opt
 }
 
-func formatLabel(device *device.Device1) string {
+func formatLabel(device BtDevice) string {
 	label := "\uf0c1  "
 	connected, err := device.GetConnected()
 	if err != nil {
@@ -232,37 +295,50 @@ func formatLabel(device *device.Device1) string {
 	return label
 }
 
-func getBatteryLabel(dev *device.Device1) string {
-	for _, uuid := range dev.Properties.UUIDs {
-		if uuid == BATTERY_UUID {
-			b, err := battery.NewBattery1(dev.Path())
-			if err != nil {
-				log.Println("Error getting battery service:", err)
-				return ""
+func getBatteryStatus(dev *device.Device1) string {
+	isConnected, _ := dev.GetConnected()
+	if isConnected {
+		for _, uuid := range dev.Properties.UUIDs {
+			if uuid == BATTERY_UUID {
+				b, err := battery.NewBattery1(dev.Path())
+				if err != nil {
+					log.Println("Error getting battery service:", err)
+					return ""
+				}
+				p, err := b.GetPercentage()
+				if err != nil {
+					log.Println("Error getting battery percentage:", err)
+					return ""
+				}
+
+				return fmt.Sprintf("%d", p)
 			}
-			p, err := b.GetPercentage()
-			if err != nil {
-				log.Println("Error getting battery percentage:", err)
-				return ""
-			}
-			icon := "\uf240"
-			switch {
-			case p >= 90:
-				icon = "\uf240"
-			case p >= 70:
-				icon = "\uf241"
-			case p >= 50:
-				icon = "\uf242"
-			case p >= 30:
-				icon = "\uf243"
-			default:
-				icon = "\uf244"
-			}
-			return fmt.Sprintf("%s   %d%%", icon, p)
 		}
 	}
 
 	return ""
+}
+
+func getBatteryLabel(percent string) string {
+	icon := "\uf240"
+	p, err := strconv.Atoi(percent)
+	if err != nil {
+		log.Println("Error converting percent to int:", err)
+		return ""
+	}
+	switch {
+	case p >= 90:
+		icon = "\uf240"
+	case p >= 70:
+		icon = "\uf241"
+	case p >= 50:
+		icon = "\uf242"
+	case p >= 30:
+		icon = "\uf243"
+	default:
+		icon = "\uf244"
+	}
+	return fmt.Sprintf("%s   %s%%", icon, percent)
 }
 
 func sendNotification(message string) {
