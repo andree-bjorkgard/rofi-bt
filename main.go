@@ -173,7 +173,7 @@ func main() {
 					// wait for connection to be established so the battery service is available
 					time.Sleep(time.Second)
 					if b := getBatteryStatus(device); b != "" {
-						sendNotification(fmt.Sprintf("Connected to device \"%s\"\n%s", device.Properties.Alias, b))
+						sendNotification(fmt.Sprintf("Connected to device \"%s\"\n%s", device.Properties.Alias, getBatteryLabel(b)))
 					} else {
 						sendNotification(fmt.Sprintf("Connected to device \"%s\"", device.Properties.Alias))
 					}
