@@ -64,15 +64,17 @@ func listOptions(views []deviceView, here string) []rofi.Option {
 }
 
 // deviceOptions builds the rows of a device screen: its actions, the first
-// one preselected by rofi. busy marks Play here as running; its row stays
-// first even once the holders have let go and Play here is no longer offered.
-func deviceOptions(v deviceView, busy bool) []rofi.Option {
+// one preselected by rofi. busy, when set, is a running Play here or Play
+// on; its row shows "Switching…" and stays first even once it is no longer
+// offered (the holders have let go).
+func deviceOptions(v deviceView, busy *action) []rofi.Option {
 	acts := v.actions()
-	if busy && acts[0].Kind != actPlayHere {
-		acts = append([]action{{Kind: actPlayHere}}, acts...)
+	if busy != nil {
+		acts = slices.DeleteFunc(acts, func(a action) bool { return a.Kind == busy.Kind && a.Machine == busy.Machine })
+		acts = append([]action{*busy}, acts...)
 	}
 	opts := make([]rofi.Option, 0, len(acts))
-	for _, a := range acts {
+	for i, a := range acts {
 		o := rofi.Option{
 			Label:       markupEscape(a.Label),
 			Icon:        actionIcon(a.Kind),
@@ -81,7 +83,7 @@ func deviceOptions(v deviceView, busy bool) []rofi.Option {
 			IsMultiline: true,
 			UseMarkup:   true,
 		}
-		if a.Kind == actPlayHere && busy {
+		if busy != nil && i == 0 {
 			o.Label = "Switching…"
 		} else if a.Hint != "" {
 			o.Info = []string{small(a.Hint)}
@@ -137,22 +139,31 @@ func listMessage(here string, others []string) string {
 	return msg
 }
 
-// deviceMessage is a device screen's message. holders, when set, are the
-// machines that let go for a running Play here.
-func deviceMessage(v deviceView, holders []string) string {
+// deviceMessage is a device screen's message. progress, when set, is the
+// line for a running Play here or Play on.
+func deviceMessage(v deviceView, progress string) string {
 	var lines []string
-	if len(holders) > 0 {
-		verb := "has"
-		if len(holders) > 1 {
-			verb = "have"
-		}
-		lines = append(lines, colored(colorProgress, markupEscape(
-			fmt.Sprintf("… Moving the sound here: %s %s let go", strings.Join(holders, " and "), verb))))
+	if progress != "" {
+		lines = append(lines, colored(colorProgress, markupEscape(progress)))
 	}
 	for _, l := range v.message() {
 		lines = append(lines, markupEscape(l))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// playHereProgress is the progress line while holders let go for Play here.
+func playHereProgress(holders []string) string {
+	verb := "has"
+	if len(holders) > 1 {
+		verb = "have"
+	}
+	return fmt.Sprintf("… Moving the sound here: %s %s let go", strings.Join(holders, " and "), verb)
+}
+
+// playOnProgress is the progress line while this computer lets go for Play on.
+func playOnProgress(machine string) string {
+	return "… Moving the sound to " + machine + ": this computer has let go"
 }
 
 // errorLine is an error shown under a screen's message.
@@ -194,6 +205,19 @@ func playHereNotice(alias string, res client.PlayHereResult, err error) (summary
 		sentences = append(sentences, fmt.Sprintf("%s could not be restored yet; %s within 15 seconds.", strings.Join(failed, " and "), self))
 	}
 	return alias + ": sound moved here", strings.Join(sentences, ". ")
+}
+
+// playOnNotice is the notification summary and body for a finished Play on.
+func playOnNotice(alias, machine string, err error) (summary, body string) {
+	switch {
+	case errors.Is(err, client.ErrNothingPlayingThere):
+		return "Nothing is playing on " + machine, "The sound stayed here. Start it on " + machine + ", then try again."
+	case errors.Is(err, client.ErrNotConnectedThere):
+		return "Could not move the sound", alias + " is not connected on " + machine
+	case err != nil:
+		return "Could not move the sound", err.Error()
+	}
+	return alias + ": sound moved to " + machine, "This computer let go and is back to normal"
 }
 
 // stableOrder keeps the addresses of order that are still in current, in

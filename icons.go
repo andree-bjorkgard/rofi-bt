@@ -58,6 +58,8 @@ func actionIcon(k actionKind) string {
 	switch k {
 	case actPlayHere:
 		name = "play-here"
+	case actPlayOn:
+		name = "play-on"
 	case actMoveHere:
 		name = "move-here"
 	case actConnectHere, actConnectOn:

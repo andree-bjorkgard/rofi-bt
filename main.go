@@ -179,9 +179,11 @@ type menu struct {
 
 	// addr is the device whose screen is shown; empty for the list.
 	addr string
-	// A running Play here: the device and the machines that let go.
-	busyAddr string
-	holders  []string
+	// A running Play here or Play on: the device, the action and its
+	// progress line.
+	busyAddr     string
+	busy         action
+	busyProgress string
 	// errMsg is shown under the message until the next navigation.
 	errMsg string
 	// shown is the screen last rendered (an address, "" for the list);
@@ -221,13 +223,13 @@ func (m *menu) view(addr string) (deviceView, bool) {
 
 func (m *menu) render() {
 	if v, ok := m.view(m.addr); ok {
-		busy := m.busyAddr == v.Address
-		var holders []string
-		if busy {
-			holders = m.holders
+		var busy *action
+		var progress string
+		if m.busyAddr == v.Address {
+			busy, progress = &m.busy, m.busyProgress
 		}
 		m.model.Prompt = v.Alias
-		m.model.Message = deviceMessage(v, holders)
+		m.model.Message = deviceMessage(v, progress)
 		m.model.Options = deviceOptions(v, busy)
 	} else {
 		var others []string
@@ -320,9 +322,21 @@ func (m *menu) handle(ctx context.Context, sel rofi.Value, results chan<- result
 			m.errMsg = "Could not move the sound: " + errNoRemote.Error()
 			return true
 		}
-		m.busyAddr, m.holders = addr, v.others(sending)
+		m.busyAddr, m.busy, m.busyProgress = addr, action{Kind: actPlayHere, Label: "Play here"}, playHereProgress(v.others(sending))
 		go func() {
 			r.play, r.err = playHere(ctx, remote, adapter, addr)
+			results <- r
+		}()
+		return true
+	}
+	if kind == actPlayOn {
+		if remote == nil {
+			m.errMsg = "Could not move the sound: " + errNoRemote.Error()
+			return true
+		}
+		m.busyAddr, m.busy, m.busyProgress = addr, action{Kind: actPlayOn, Machine: machine, Label: "Play on " + machine}, playOnProgress(machine)
+		go func() {
+			r.err = remote.PlayOn(ctx, machine, addr)
 			results <- r
 		}()
 		return true
@@ -351,8 +365,16 @@ func (m *menu) finished(r result, announce chan<- result) bool {
 	if v, ok := m.view(r.addr); ok {
 		name = v.Alias
 	}
+	if r.kind == actPlayOn {
+		m.busyAddr, m.busyProgress = "", ""
+		if r.err != nil {
+			log.Printf("play on %s: %s", r.machine, r.err)
+		}
+		sendNotification(playOnNotice(name, r.machine, r.err))
+		return true
+	}
 	if r.kind == actPlayHere {
-		m.busyAddr, m.holders = "", nil
+		m.busyAddr, m.busyProgress = "", ""
 		for server, err := range r.play.Failed {
 			log.Printf("play here: %s: %s", server, err)
 		}

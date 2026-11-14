@@ -43,6 +43,7 @@ const (
 	actConnectOn
 	actDisconnectHere
 	actDisconnectOn
+	actPlayOn
 	actBack
 )
 
@@ -204,7 +205,13 @@ func (v deviceView) actions() []action {
 	elsewhere := v.others(connected)
 	if s := v.others(sending); connHere && len(s) > 0 {
 		acts = append(acts, action{Kind: actPlayHere, Label: "Play here",
-			Hint: strings.Join(s, " and ") + " lets go for a moment and the sound comes here. Both stay connected."})
+			Hint: strings.Join(s, " and ") + " lets go, the sound comes here"})
+	}
+	if here != nil && here.Dev.Audio == bluez.AudioSending {
+		for _, m := range elsewhere {
+			acts = append(acts, action{Kind: actPlayOn, Machine: m, Label: "Play on " + m,
+				Hint: "This computer lets go, the sound goes to " + m})
+		}
 	}
 	if !connHere && len(elsewhere) > 0 {
 		acts = append(acts, action{Kind: actMoveHere, Label: "Move here",

@@ -87,7 +87,7 @@ func TestActions(t *testing.T) {
 		want []la
 	}{
 		{"ATH", []la{
-			{"Play here", "ingenting lets go for a moment and the sound comes here. Both stay connected."},
+			{"Play here", "ingenting lets go, the sound comes here"},
 			{"Disconnect here", "ingenting keeps them"},
 			{"Disconnect on ingenting", "Only this computer keeps them"},
 			{"Back", ""},

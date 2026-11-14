@@ -87,7 +87,7 @@ func TestListOptionsEscapes(t *testing.T) {
 func TestDeviceOptions(t *testing.T) {
 	v := situations()["ATH"]
 	acts := v.actions()
-	opts := deviceOptions(v, false)
+	opts := deviceOptions(v, nil)
 	if len(opts) != len(acts) {
 		t.Fatalf("got %d options, want %d", len(opts), len(acts))
 	}
@@ -126,7 +126,7 @@ func TestDeviceOptions(t *testing.T) {
 
 func TestDeviceOptionsBusy(t *testing.T) {
 	v := situations()["ATH"]
-	opts := deviceOptions(v, true)
+	opts := deviceOptions(v, &playHereBusy)
 	if opts[0].Label != "Switching…" {
 		t.Errorf("first option %q, want Switching…", opts[0].Label)
 	}
@@ -142,7 +142,7 @@ func TestDeviceOptionsBusy(t *testing.T) {
 
 func TestDeviceOptionsEscapes(t *testing.T) {
 	v := merge("laptop", nil, []client.Device{rdev("a&b", dev("K", "K", false, bluez.AudioNone))})[0]
-	for _, o := range deviceOptions(v, false) {
+	for _, o := range deviceOptions(v, nil) {
 		if strings.Contains(o.Label, "a&b") {
 			t.Errorf("label %q not escaped", o.Label)
 		}
@@ -173,11 +173,11 @@ func TestListMessage(t *testing.T) {
 
 func TestDeviceMessage(t *testing.T) {
 	v := situations()["ATH"]
-	got := deviceMessage(v, nil)
+	got := deviceMessage(v, "")
 	if want := "▶ Sound from ingenting\nConnected here and on ingenting"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	got = deviceMessage(v, []string{"ingenting"})
+	got = deviceMessage(v, playHereProgress([]string{"ingenting"}))
 	if want := `<span color="#FDD835">… Moving the sound here: ingenting has let go</span>` + "\n▶ Sound from ingenting\nConnected here and on ingenting"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -236,7 +236,7 @@ func TestStableOrder(t *testing.T) {
 func TestDeviceOptionsBusyAfterRelease(t *testing.T) {
 	v := merge("laptop", []bluez.Device{dev("A", "ATH", true, bluez.AudioIdle)},
 		[]client.Device{rdev("ingenting", dev("A", "ATH", true, bluez.AudioNone))})[0]
-	opts := deviceOptions(v, true)
+	opts := deviceOptions(v, &playHereBusy)
 	if opts[0].Label != "Switching…" || opts[0].Value != "act|A|-|"+strconv.Itoa(int(actPlayHere)) {
 		t.Errorf("first option %q %q, want Switching…", opts[0].Label, opts[0].Value)
 	}
@@ -248,7 +248,7 @@ func TestDeviceOptionsBusyAfterRelease(t *testing.T) {
 // rofi joins value and commands with "||" and splits them back; no action
 // value may hold "||" or end in "|", or that split cuts it apart.
 func TestActionRoundTrip(t *testing.T) {
-	for _, o := range deviceOptions(situations()["ATH"], false) {
+	for _, o := range deviceOptions(situations()["ATH"], nil) {
 		data := strings.Join(append([]string{o.Value}, o.Cmds...), "||") // as rofi.mapOptions
 		parts := strings.Split(data, "||")                               // as rofi.getValue
 		if parts[0] != o.Value || parts[1] != "run" {
@@ -330,6 +330,61 @@ func TestToggle(t *testing.T) {
 	for _, c := range cases {
 		if a := c.v.toggle(); a.Kind != c.kind || a.Machine != c.machine {
 			t.Errorf("%s: got %v %q, want %v %q", c.name, a.Kind, a.Machine, c.kind, c.machine)
+		}
+	}
+}
+
+var playHereBusy = action{Kind: actPlayHere, Label: "Play here"}
+
+// Sound plays here and the headphones are also on ingenting: Play on is
+// offered, and Play here is not.
+func TestPlayOnAction(t *testing.T) {
+	v := merge("laptop", []bluez.Device{dev("A", "ATH", true, bluez.AudioSending)},
+		[]client.Device{rdev("ingenting", dev("A", "ATH", true, bluez.AudioIdle))})[0]
+	acts := v.actions()
+	if acts[0].Kind != actPlayOn || acts[0].Machine != "ingenting" || acts[0].Label != "Play on ingenting" {
+		t.Fatalf("first action %+v, want Play on ingenting", acts[0])
+	}
+	for _, a := range acts {
+		if a.Kind == actPlayHere {
+			t.Error("Play here offered while the sound plays here")
+		}
+	}
+	// Not offered when the sound is not playing here.
+	v = merge("laptop", []bluez.Device{dev("A", "ATH", true, bluez.AudioIdle)},
+		[]client.Device{rdev("ingenting", dev("A", "ATH", true, bluez.AudioIdle))})[0]
+	for _, a := range v.actions() {
+		if a.Kind == actPlayOn {
+			t.Error("Play on offered while nothing plays here")
+		}
+	}
+}
+
+func TestDeviceOptionsPlayOnBusy(t *testing.T) {
+	v := merge("laptop", []bluez.Device{dev("A", "ATH", true, bluez.AudioSending)},
+		[]client.Device{rdev("ingenting", dev("A", "ATH", true, bluez.AudioIdle))})[0]
+	busy := action{Kind: actPlayOn, Machine: "ingenting", Label: "Play on ingenting"}
+	opts := deviceOptions(v, &busy)
+	if opts[0].Label != "Switching…" || opts[0].Value != "act|A|ingenting|"+strconv.Itoa(int(actPlayOn)) {
+		t.Errorf("first option %q %q", opts[0].Label, opts[0].Value)
+	}
+	if len(opts) != len(v.actions()) {
+		t.Errorf("got %d options, want the actions with Play on replaced", len(opts))
+	}
+}
+
+func TestPlayOnNotice(t *testing.T) {
+	cases := []struct {
+		err           error
+		summary, body string
+	}{
+		{nil, "ATH: sound moved to ingenting", "This computer let go and is back to normal"},
+		{client.ErrNothingPlayingThere, "Nothing is playing on ingenting", "The sound stayed here. Start it on ingenting, then try again."},
+		{client.ErrNotConnectedThere, "Could not move the sound", "ATH is not connected on ingenting"},
+	}
+	for _, c := range cases {
+		if s, b := playOnNotice("ATH", "ingenting", c.err); s != c.summary || b != c.body {
+			t.Errorf("%v: got %q / %q", c.err, s, b)
 		}
 	}
 }
