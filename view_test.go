@@ -47,8 +47,8 @@ func TestStatus(t *testing.T) {
 		status, detail string
 		tone           tone
 	}{
-		{"ATH", "▶ Sound from ingenting", "· connected to both", toneOn},
-		{"ATH both", "▶ Sound from both", "· connected to both", toneOn},
+		{"ATH", "▶ Sound from ingenting", "", toneOn},
+		{"ATH both", "▶ Sound from both", "", toneOn},
 		{"Glove80", "Connected here", "· and on ingenting", toneOn},
 		{"MX Vertical", "Connected on ingenting", "", toneNeutral},
 		{"MX Master 3S", "Not connected", "", toneDim},
@@ -74,7 +74,7 @@ func TestStatusVariants(t *testing.T) {
 		{Machine: "laptop", Here: true, Dev: bluez.Device{Connected: true}},
 		{Machine: "ingenting", Dev: bluez.Device{Audio: bluez.AudioSending}},
 	}}
-	if st, d, _ := alsoHere.status(); st != "▶ Sound from ingenting" || d != "· also here" {
+	if st, d, _ := alsoHere.status(); st != "▶ Sound from ingenting" || d != "" {
 		t.Errorf("also here: %q %q", st, d)
 	}
 }

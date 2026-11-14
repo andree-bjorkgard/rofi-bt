@@ -2,7 +2,7 @@ module github.com/andree-bjorkgard/rofi-bt
 
 go 1.26.0
 
-require github.com/andree-bjorkgard/rofi v0.3.0
+require github.com/andree-bjorkgard/rofi v0.3.1
 
 require (
 	github.com/libp2p/zeroconf/v2 v2.2.0 // indirect

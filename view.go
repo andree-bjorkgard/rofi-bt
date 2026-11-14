@@ -161,15 +161,10 @@ func (v deviceView) soundFrom() string {
 }
 
 func (v deviceView) status() (status, detail string, t tone) {
-	conn := v.machines(connected)
+	// The sound line has no detail, so it fits beside the battery; the
+	// device screen says where it is connected.
 	if s := v.soundFrom(); s != "" {
-		switch {
-		case len(conn) >= 2:
-			detail = "· connected to both"
-		case v.connectedHere() && len(v.others(sending)) > 0:
-			detail = "· also here"
-		}
-		return s, detail, toneOn
+		return s, "", toneOn
 	}
 	elsewhere := v.others(connected)
 	switch {
@@ -185,6 +180,21 @@ func (v deviceView) status() (status, detail string, t tone) {
 		detail = "· paired on " + strings.Join(v.others(func(presence) bool { return true }), " and ")
 	}
 	return "Not connected", detail, toneDim
+}
+
+// toggle is what Enter does on the list: connect or disconnect, here when the
+// device is paired here, otherwise on the machine that has it.
+func (v deviceView) toggle() action {
+	if v.hereP() != nil {
+		if v.connectedHere() {
+			return action{Kind: actDisconnectHere}
+		}
+		return action{Kind: actConnectHere}
+	}
+	if on := v.others(connected); len(on) > 0 {
+		return action{Kind: actDisconnectOn, Machine: on[0]}
+	}
+	return action{Kind: actConnectOn, Machine: v.others(func(presence) bool { return true })[0]}
 }
 
 func (v deviceView) actions() []action {

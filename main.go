@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -58,6 +59,9 @@ func main() {
 		here = "this computer"
 	}
 	m := &menu{model: &model, here: here, local: map[string]bluez.Device{}}
+	if err := installIcons(); err != nil {
+		log.Println("icons:", err)
+	}
 
 	// Local devices.
 	var localChanges <-chan bluez.Change
@@ -180,6 +184,10 @@ type menu struct {
 	holders  []string
 	// errMsg is shown under the message until the next navigation.
 	errMsg string
+	// shown is the screen last rendered (an address, "" for the list);
+	// rendered is false until the first render.
+	shown    string
+	rendered bool
 }
 
 // refresh recomputes the merged views from the local and remote devices.
@@ -237,21 +245,57 @@ func (m *menu) render() {
 	if m.errMsg != "" {
 		m.model.Message += "\n" + errorLine(m.errMsg)
 	}
-	m.model.Render()
+	// rofi keeps the selected row index across renders. That is right for
+	// live updates, but a new screen starts on its first action, and the
+	// list comes back on the device that was open.
+	if sel, ok := m.selection(); ok {
+		m.model.Render(sel)
+	} else {
+		m.model.Render()
+	}
+	m.shown, m.rendered = m.addr, true
+}
+
+// selection is the row to select when the screen changed since the last
+// render; ok is false to keep rofi's selection.
+func (m *menu) selection() (row int, ok bool) {
+	if !m.rendered || m.addr == m.shown {
+		return 0, false
+	}
+	if m.addr != "" {
+		return 0, true
+	}
+	if i := slices.Index(m.order, m.shown); i >= 0 {
+		return i, true
+	}
+	return 0, true
 }
 
 // handle reacts to a selected row. It reports whether to render.
 func (m *menu) handle(ctx context.Context, sel rofi.Value, results chan<- result) bool {
-	if addr, ok := strings.CutPrefix(sel.Value, devPrefix); ok && sel.Cmd == "open" {
-		if _, ok := m.view(addr); !ok {
+	var addr, machine string
+	var kind actionKind
+	if a, ok := strings.CutPrefix(sel.Value, devPrefix); ok {
+		v, ok := m.view(a)
+		if !ok {
 			return false
 		}
-		m.addr, m.errMsg = addr, ""
-		return true
-	}
-	addr, kind, machine, ok := parseAction(sel.Value)
-	if !ok || sel.Cmd != "run" {
-		return false
+		switch sel.Cmd {
+		case "open": // Ctrl+Enter: the device screen
+			m.addr, m.errMsg = a, ""
+			return true
+		case "toggle": // Enter: connect or disconnect
+			t := v.toggle()
+			addr, kind, machine = a, t.Kind, t.Machine
+		default:
+			return false
+		}
+	} else {
+		var ok bool
+		addr, kind, machine, ok = parseAction(sel.Value)
+		if !ok || sel.Cmd != "run" {
+			return false
+		}
 	}
 	if kind == actBack {
 		m.addr, m.errMsg = "", ""

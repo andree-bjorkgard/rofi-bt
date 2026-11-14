@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,29 +22,34 @@ func TestListOptions(t *testing.T) {
 		if want := "dev|" + views[i].Address; o.Value != want {
 			t.Errorf("option %d value %q, want %q", i, o.Value, want)
 		}
-		if len(o.Cmds) != 1 || o.Cmds[0] != "open" {
-			t.Errorf("option %d cmds %q, want [open]", i, o.Cmds)
+		if len(o.Cmds) != 2 || o.Cmds[0] != "toggle" || o.Cmds[1] != "open" {
+			t.Errorf("option %d cmds %q, want [toggle open]", i, o.Cmds)
 		}
 		if !o.UseMarkup || !o.IsMultiline {
 			t.Errorf("option %d: markup %v multiline %v, want both", i, o.UseMarkup, o.IsMultiline)
 		}
-		if len(o.Info) != 1 || !strings.HasPrefix(o.Info[0], `<span size="small" color="#C3C3C3">`) {
-			t.Errorf("option %d info %q, want one small grey line", i, o.Info)
+		if len(o.Info) != 1 || !strings.HasPrefix(o.Info[0], `<span size="small">`) {
+			t.Errorf("option %d info %q, want one small line", i, o.Info)
+		}
+		// No fixed colours or opacity in a row: rofi colours the text by
+		// the row's state, black when the row is highlighted.
+		if strings.Contains(o.Label+o.Info[0], "color=") || strings.Contains(o.Label+o.Info[0], "alpha") {
+			t.Errorf("option %d has a fixed colour: %q %q", i, o.Label, o.Info)
 		}
 	}
 
-	// toneOn: status in green, detail plain.
-	if o := opts[0]; o.Label != "ATH" ||
-		!strings.Contains(o.Info[0], `<span color="#61C766">▶ Sound from ingenting</span> · connected to both`) {
+	// Connected here: a normal row, status in bold.
+	if o := opts[0]; o.Label != "ATH" || o.IsUrgent ||
+		o.Info[0] != `<span size="small"><b>▶ Sound from ingenting</b></span>` {
 		t.Errorf("ATH row: label %q info %q", o.Label, o.Info)
 	}
-	// toneNeutral: plain.
-	if o := opts[1]; o.Label != "MX Vertical" || o.Info[0] != small("Connected on ingenting") {
+	// Connected elsewhere only: grey.
+	if o := opts[1]; o.Label != "MX Vertical" || !o.IsUrgent || o.Info[0] != small("Connected on ingenting") {
 		t.Errorf("MX Vertical row: label %q info %q", o.Label, o.Info)
 	}
-	// toneDim: name and status line dimmed.
-	if o := opts[2]; o.Label != `<span color="#928374">MX Master 3S</span>` ||
-		!strings.Contains(o.Info[0], `<span color="#928374">Not connected</span>`) {
+	// toneDim: an urgent (grey) row.
+	if o := opts[2]; o.Label != "MX Master 3S" || !o.IsUrgent ||
+		o.Info[0] != small("Not connected") {
 		t.Errorf("MX Master 3S row: label %q info %q", o.Label, o.Info)
 	}
 }
@@ -51,7 +57,7 @@ func TestListOptions(t *testing.T) {
 func TestListOptionsDimDetail(t *testing.T) {
 	v := merge("laptop", nil, []client.Device{rdev("ingenting", dev("K", "Keychron", false, bluez.AudioNone))})[0]
 	o := listOptions([]deviceView{v}, "laptop")[0]
-	if !strings.Contains(o.Info[0], `<span color="#928374">Not connected · paired on ingenting</span>`) {
+	if !o.IsUrgent || o.Info[0] != small("Not connected · paired on ingenting") {
 		t.Errorf("info %q, want dim status and detail", o.Info)
 	}
 }
@@ -102,6 +108,9 @@ func TestDeviceOptions(t *testing.T) {
 		}
 		if strings.Contains(o.Value, "||") {
 			t.Errorf("option %d value %q contains ||", i, o.Value)
+		}
+		if o.Icon == "" || !strings.HasSuffix(o.Icon, ".svg") {
+			t.Errorf("option %d icon %q, want an svg", i, o.Icon)
 		}
 		if acts[i].Hint != "" && (len(o.Info) != 1 || o.Info[0] != small(acts[i].Hint)) {
 			t.Errorf("option %d info %q, want hint %q", i, o.Info, acts[i].Hint)
@@ -251,5 +260,76 @@ func TestActionRoundTrip(t *testing.T) {
 	}
 	if _, kind, machine, ok := parseAction("act|A|-|" + strconv.Itoa(int(actBack))); !ok || kind != actBack || machine != "" {
 		t.Errorf("Back: got %v %q %v", kind, machine, ok)
+	}
+}
+
+func TestMain(m *testing.M) {
+	// Icons go to a throwaway cache so deviceOptions has paths to give.
+	dir, err := os.MkdirTemp("", "rofi-bt-test")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("XDG_CACHE_HOME", dir)
+	if err := installIcons(); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+func TestActionIcons(t *testing.T) {
+	for k := actPlayHere; k <= actBack; k++ {
+		p := actionIcon(k)
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("kind %d: icon %q: %v", k, p, err)
+		}
+	}
+}
+
+func TestSelection(t *testing.T) {
+	m := &menu{order: []string{"A", "B", "C"}}
+	if _, ok := m.selection(); ok {
+		t.Error("first render selects a row")
+	}
+	m.rendered = true
+	if _, ok := m.selection(); ok {
+		t.Error("list update selects a row")
+	}
+	m.addr = "B" // open B
+	if row, ok := m.selection(); !ok || row != 0 {
+		t.Errorf("opening a device: %d %v, want first row", row, ok)
+	}
+	m.shown = "B"
+	if _, ok := m.selection(); ok {
+		t.Error("device update selects a row")
+	}
+	m.addr = "" // back
+	if row, ok := m.selection(); !ok || row != 1 {
+		t.Errorf("back: %d %v, want B's row 1", row, ok)
+	}
+	m.shown, m.order = "Z", []string{"A"} // the device went away
+	if row, ok := m.selection(); !ok || row != 0 {
+		t.Errorf("back from a gone device: %d %v, want 0", row, ok)
+	}
+}
+
+func TestToggle(t *testing.T) {
+	cases := []struct {
+		name    string
+		v       deviceView
+		kind    actionKind
+		machine string
+	}{
+		{"connected here", merge("laptop", []bluez.Device{dev("A", "A", true, bluez.AudioNone)}, nil)[0], actDisconnectHere, ""},
+		{"paired here", merge("laptop", []bluez.Device{dev("A", "A", false, bluez.AudioNone)},
+			[]client.Device{rdev("ingenting", dev("A", "A", true, bluez.AudioNone))})[0], actConnectHere, ""},
+		{"only there, connected", merge("laptop", nil, []client.Device{rdev("ingenting", dev("A", "A", true, bluez.AudioNone))})[0], actDisconnectOn, "ingenting"},
+		{"only there", merge("laptop", nil, []client.Device{rdev("ingenting", dev("A", "A", false, bluez.AudioNone))})[0], actConnectOn, "ingenting"},
+	}
+	for _, c := range cases {
+		if a := c.v.toggle(); a.Kind != c.kind || a.Machine != c.machine {
+			t.Errorf("%s: got %v %q, want %v %q", c.name, a.Kind, a.Machine, c.kind, c.machine)
+		}
 	}
 }

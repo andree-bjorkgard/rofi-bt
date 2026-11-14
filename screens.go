@@ -11,10 +11,11 @@ import (
 	"github.com/andree-bjorkgard/rofi"
 )
 
-// Colours from the rofi theme.
+// Colours for the message area, which rofi never highlights. Rows carry no
+// colours of their own: rofi can only recolour a whole row by its state, so
+// rows for devices not connected here are "urgent", which bt.rasi greys, and
+// bt.rasi turns every highlighted row black.
 const (
-	colorOn       = "#61C766"
-	colorDim      = "#928374"
 	colorProgress = "#FDD835"
 	colorError    = "#EC7875"
 )
@@ -40,14 +41,10 @@ func listOptions(views []deviceView, here string) []rofi.Option {
 		}
 		line := markupEscape(status)
 		if t == toneOn {
-			line = colored(colorOn, line)
+			line = "<b>" + line + "</b>"
 		}
 		if detail != "" {
 			line += " " + markupEscape(detail)
-		}
-		if t == toneDim {
-			name = colored(colorDim, name)
-			line = colored(colorDim, line)
 		}
 		if v.Battery >= 0 {
 			line += " · " + markupEscape(batteryLabel(uint8(v.Battery)))
@@ -55,9 +52,10 @@ func listOptions(views []deviceView, here string) []rofi.Option {
 		opts = append(opts, rofi.Option{
 			Label:       name,
 			Info:        []string{smallMarkup(line)},
+			IsUrgent:    !v.connectedHere(), // grey unless connected here
 			Icon:        v.Icon,
 			Value:       devPrefix + v.Address,
-			Cmds:        []string{"open"},
+			Cmds:        []string{"toggle", "open"}, // Enter, Ctrl+Enter
 			IsMultiline: true,
 			UseMarkup:   true,
 		})
@@ -77,6 +75,7 @@ func deviceOptions(v deviceView, busy bool) []rofi.Option {
 	for _, a := range acts {
 		o := rofi.Option{
 			Label:       markupEscape(a.Label),
+			Icon:        actionIcon(a.Kind),
 			Value:       actionValue(v.Address, a),
 			Cmds:        []string{"run"},
 			IsMultiline: true,
@@ -218,7 +217,7 @@ func colored(color, markup string) string {
 	return fmt.Sprintf("<span color=%q>%s</span>", color, markup)
 }
 
-// smallMarkup wraps already escaped markup in the small grey second line.
+// smallMarkup wraps already escaped markup in the small second line.
 func smallMarkup(markup string) string {
-	return fmt.Sprintf("<span size=\"small\" color=\"#C3C3C3\">%s</span>", markup)
+	return fmt.Sprintf("<span size=\"small\">%s</span>", markup)
 }
