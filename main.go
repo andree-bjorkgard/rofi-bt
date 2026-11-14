@@ -114,7 +114,7 @@ func main() {
 	}
 
 	results := make(chan result)
-	connected := make(chan result)
+	announce := make(chan result) // connects to announce once the battery is known
 
 	for {
 		select {
@@ -143,11 +143,11 @@ func main() {
 			}
 
 		case r := <-results:
-			if !m.finished(r, connected) {
+			if !m.finished(r, announce) {
 				continue
 			}
 
-		case r := <-connected:
+		case r := <-announce:
 			name, body := r.addr, ""
 			if v, ok := m.view(r.addr); ok {
 				name = v.Alias
@@ -242,7 +242,6 @@ func (m *menu) render() {
 
 // handle reacts to a selected row. It reports whether to render.
 func (m *menu) handle(ctx context.Context, sel rofi.Value, results chan<- result) bool {
-	sel = selection(sel)
 	if addr, ok := strings.CutPrefix(sel.Value, devPrefix); ok && sel.Cmd == "open" {
 		if _, ok := m.view(addr); !ok {
 			return false
@@ -259,7 +258,8 @@ func (m *menu) handle(ctx context.Context, sel rofi.Value, results chan<- result
 		return true
 	}
 	v, ok := m.view(addr)
-	if !ok {
+	if !ok || m.busyAddr != "" {
+		// While Play here runs, other actions are not started.
 		return false
 	}
 	m.errMsg = ""
@@ -269,8 +269,6 @@ func (m *menu) handle(ctx context.Context, sel rofi.Value, results chan<- result
 
 	if kind == actPlayHere {
 		switch {
-		case m.busyAddr != "":
-			return false
 		case adapter == nil:
 			m.errMsg = "Could not move the sound: " + errNoLocalBluetooth.Error()
 			return true
@@ -304,7 +302,7 @@ func (m *menu) handle(ctx context.Context, sel rofi.Value, results chan<- result
 }
 
 // finished reacts to a finished action. It reports whether to render.
-func (m *menu) finished(r result, connected chan<- result) bool {
+func (m *menu) finished(r result, announce chan<- result) bool {
 	name := r.addr
 	if v, ok := m.view(r.addr); ok {
 		name = v.Alias
@@ -327,7 +325,7 @@ func (m *menu) finished(r result, connected chan<- result) bool {
 		// Give the device a moment to report its battery level.
 		go func() {
 			time.Sleep(time.Second)
-			connected <- r
+			announce <- r
 		}()
 	default:
 		sendNotification(fmt.Sprintf("Disconnected \"%s\"%s", name, where(r)), "")

@@ -1,13 +1,13 @@
 package main
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/andree-bjorkgard/remote-bluetooth/v2/bluez"
 	"github.com/andree-bjorkgard/remote-bluetooth/v2/client"
-	"github.com/andree-bjorkgard/rofi"
 )
 
 func TestListOptions(t *testing.T) {
@@ -89,7 +89,11 @@ func TestDeviceOptions(t *testing.T) {
 		t.Errorf("first option %q, want the first action Play here", opts[0].Label)
 	}
 	for i, o := range opts {
-		want := "act|A|" + strconv.Itoa(int(acts[i].Kind)) + "|" + acts[i].Machine
+		machine := acts[i].Machine
+		if machine == "" {
+			machine = "-"
+		}
+		want := "act|A|" + machine + "|" + strconv.Itoa(int(acts[i].Kind))
 		if o.Value != want {
 			t.Errorf("option %d value %q, want %q", i, o.Value, want)
 		}
@@ -103,10 +107,10 @@ func TestDeviceOptions(t *testing.T) {
 			t.Errorf("option %d info %q, want hint %q", i, o.Info, acts[i].Hint)
 		}
 	}
-	if opts[len(opts)-1].Label != "Back" || opts[len(opts)-1].Value != "act|A|"+strconv.Itoa(int(actBack))+"|" {
+	if opts[len(opts)-1].Label != "Back" || opts[len(opts)-1].Value != "act|A|-|"+strconv.Itoa(int(actBack)) {
 		t.Errorf("last option %q %q, want Back", opts[len(opts)-1].Label, opts[len(opts)-1].Value)
 	}
-	if o := opts[2]; o.Label != "Disconnect on ingenting" || o.Value != "act|A|"+strconv.Itoa(int(actDisconnectOn))+"|ingenting" {
+	if o := opts[2]; o.Label != "Disconnect on ingenting" || o.Value != "act|A|ingenting|"+strconv.Itoa(int(actDisconnectOn)) {
 		t.Errorf("third option %q %q", o.Label, o.Value)
 	}
 }
@@ -117,7 +121,7 @@ func TestDeviceOptionsBusy(t *testing.T) {
 	if opts[0].Label != "Switching…" {
 		t.Errorf("first option %q, want Switching…", opts[0].Label)
 	}
-	if opts[0].Value != "act|A|"+strconv.Itoa(int(actPlayHere))+"|" {
+	if opts[0].Value != "act|A|-|"+strconv.Itoa(int(actPlayHere)) {
 		t.Errorf("first option value %q", opts[0].Value)
 	}
 	for _, o := range opts[1:] {
@@ -137,14 +141,14 @@ func TestDeviceOptionsEscapes(t *testing.T) {
 }
 
 func TestParseAction(t *testing.T) {
-	addr, kind, machine, ok := parseAction("act|00:0A:45:19:F3:A6|3|ingenting")
+	addr, kind, machine, ok := parseAction("act|00:0A:45:19:F3:A6|ingenting|3")
 	if !ok || addr != "00:0A:45:19:F3:A6" || kind != actConnectOn || machine != "ingenting" {
 		t.Errorf("got %q %v %q %v", addr, kind, machine, ok)
 	}
 	if _, _, _, ok := parseAction("dev|A"); ok {
 		t.Error("dev value parsed as action")
 	}
-	if _, _, _, ok := parseAction("act|A|x|"); ok {
+	if _, _, _, ok := parseAction("act|A|-|x"); ok {
 		t.Error("bad kind parsed")
 	}
 }
@@ -184,6 +188,23 @@ func TestPlayHereNotice(t *testing.T) {
 			t.Errorf("%v: got %q / %q", c.released, s, b)
 		}
 	}
+	failed := []struct {
+		res  client.PlayHereResult
+		body string
+	}{
+		{client.PlayHereResult{Released: []string{"a", "b"}, Failed: map[string]error{"b": errors.New("x")}},
+			"a let go and is back to normal. b could not be restored yet; it will restore itself within 15 seconds."},
+		{client.PlayHereResult{Released: []string{"a"}, Failed: map[string]error{"a": errors.New("x")}},
+			"a could not be restored yet; it will restore itself within 15 seconds."},
+		{client.PlayHereResult{Released: []string{"a", "b"}, Failed: map[string]error{"a": errors.New("x"), "b": errors.New("y")}},
+			"a and b could not be restored yet; they will restore themselves within 15 seconds."},
+	}
+	for _, c := range failed {
+		s, b := playHereNotice("ATH", c.res, nil)
+		if s != "ATH: sound moved here" || b != c.body {
+			t.Errorf("%v: got %q / %q, want body %q", c.res, s, b, c.body)
+		}
+	}
 	s, b := playHereNotice("ATH", client.PlayHereResult{}, client.ErrNothingPlayingHere)
 	if s != "Nothing is playing here" || b != "start the sound here, then try again" {
 		t.Errorf("nothing playing: got %q / %q", s, b)
@@ -207,7 +228,7 @@ func TestDeviceOptionsBusyAfterRelease(t *testing.T) {
 	v := merge("laptop", []bluez.Device{dev("A", "ATH", true, bluez.AudioIdle)},
 		[]client.Device{rdev("ingenting", dev("A", "ATH", true, bluez.AudioNone))})[0]
 	opts := deviceOptions(v, true)
-	if opts[0].Label != "Switching…" || opts[0].Value != "act|A|"+strconv.Itoa(int(actPlayHere))+"|" {
+	if opts[0].Label != "Switching…" || opts[0].Value != "act|A|-|"+strconv.Itoa(int(actPlayHere)) {
 		t.Errorf("first option %q %q, want Switching…", opts[0].Label, opts[0].Value)
 	}
 	if n := len(opts); n != len(v.actions())+1 {
@@ -215,15 +236,20 @@ func TestDeviceOptionsBusyAfterRelease(t *testing.T) {
 	}
 }
 
-// rofi joins value and commands with "||" and splits them back; an action
-// with no machine ends in "|", which that split moves into the command.
-func TestSelectionRoundTrip(t *testing.T) {
-	for _, value := range []string{"act|A|6|", "act|A|3|ingenting", "dev|A"} {
-		data := value + "||run"
-		parts := strings.Split(data, "||") // as rofi.getValue does
-		sel := selection(rofi.Value{Value: parts[0], Cmd: parts[1]})
-		if sel.Value != value || sel.Cmd != "run" {
-			t.Errorf("%q: got %q %q", value, sel.Value, sel.Cmd)
+// rofi joins value and commands with "||" and splits them back; no action
+// value may hold "||" or end in "|", or that split cuts it apart.
+func TestActionRoundTrip(t *testing.T) {
+	for _, o := range deviceOptions(situations()["ATH"], false) {
+		data := strings.Join(append([]string{o.Value}, o.Cmds...), "||") // as rofi.mapOptions
+		parts := strings.Split(data, "||")                               // as rofi.getValue
+		if parts[0] != o.Value || parts[1] != "run" {
+			t.Errorf("%q: came back as %q %q", o.Value, parts[0], parts[1])
 		}
+		if _, _, _, ok := parseAction(parts[0]); !ok {
+			t.Errorf("%q does not parse", parts[0])
+		}
+	}
+	if _, kind, machine, ok := parseAction("act|A|-|" + strconv.Itoa(int(actBack))); !ok || kind != actBack || machine != "" {
+		t.Errorf("Back: got %v %q %v", kind, machine, ok)
 	}
 }

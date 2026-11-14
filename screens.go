@@ -24,6 +24,9 @@ const (
 const (
 	devPrefix = "dev|"
 	actPrefix = "act|"
+	// noMachine stands for an empty machine in an action value, so the
+	// value never holds "||". No hostname is "-".
+	noMachine = "-"
 )
 
 // listOptions builds the device list, one row per view in the given order.
@@ -74,7 +77,7 @@ func deviceOptions(v deviceView, busy bool) []rofi.Option {
 	for _, a := range acts {
 		o := rofi.Option{
 			Label:       markupEscape(a.Label),
-			Value:       fmt.Sprintf("%s%s|%d|%s", actPrefix, v.Address, int(a.Kind), a.Machine),
+			Value:       actionValue(v.Address, a),
 			Cmds:        []string{"run"},
 			IsMultiline: true,
 			UseMarkup:   true,
@@ -89,17 +92,19 @@ func deviceOptions(v deviceView, busy bool) []rofi.Option {
 	return opts
 }
 
-// selection undoes rofi's split of a row's data on "||": a value ending in
-// "|" (an action with no machine) comes back with that "|" on the command.
-func selection(v rofi.Value) rofi.Value {
-	if cmd, ok := strings.CutPrefix(v.Cmd, "|"); ok {
-		v.Value += "|"
-		v.Cmd = cmd
+// actionValue encodes an action row's value as act|<ADDR>|<machine>|<kind>.
+// rofi joins value and commands with "||" and splits on it again, so the
+// value must neither hold "||" nor end in "|": the kind comes last and an
+// empty machine is written as noMachine.
+func actionValue(addr string, a action) string {
+	machine := a.Machine
+	if machine == "" {
+		machine = noMachine
 	}
-	return v
+	return fmt.Sprintf("%s%s|%s|%d", actPrefix, addr, machine, int(a.Kind))
 }
 
-// parseAction decodes an action row's value.
+// parseAction decodes a value made by actionValue.
 func parseAction(value string) (addr string, kind actionKind, machine string, ok bool) {
 	rest, found := strings.CutPrefix(value, actPrefix)
 	if !found {
@@ -109,11 +114,15 @@ func parseAction(value string) (addr string, kind actionKind, machine string, ok
 	if len(parts) != 3 || parts[0] == "" {
 		return "", 0, "", false
 	}
-	k, err := strconv.Atoi(parts[1])
+	k, err := strconv.Atoi(parts[2])
 	if err != nil || k < int(actPlayHere) || k > int(actBack) {
 		return "", 0, "", false
 	}
-	return parts[0], actionKind(k), parts[2], true
+	machine = parts[1]
+	if machine == noMachine {
+		machine = ""
+	}
+	return parts[0], actionKind(k), machine, true
 }
 
 // listMessage is the list screen's message: this machine and the others.
@@ -160,12 +169,32 @@ func playHereNotice(alias string, res client.PlayHereResult, err error) (summary
 	case err != nil:
 		return "Could not move the sound", err.Error()
 	}
-	verb := "is"
-	if len(res.Released) > 1 {
-		verb = "are"
+	// Only the servers that restored cleanly are back to normal; the others
+	// restore themselves when their hold runs out.
+	var restored, failed []string
+	for _, m := range res.Released {
+		if _, ok := res.Failed[m]; ok {
+			failed = append(failed, m)
+		} else {
+			restored = append(restored, m)
+		}
 	}
-	return alias + ": sound moved here",
-		fmt.Sprintf("%s let go and %s back to normal", strings.Join(res.Released, " and "), verb)
+	var sentences []string
+	if len(restored) > 0 {
+		verb := "is"
+		if len(restored) > 1 {
+			verb = "are"
+		}
+		sentences = append(sentences, fmt.Sprintf("%s let go and %s back to normal", strings.Join(restored, " and "), verb))
+	}
+	if len(failed) > 0 {
+		self := "it will restore itself"
+		if len(failed) > 1 {
+			self = "they will restore themselves"
+		}
+		sentences = append(sentences, fmt.Sprintf("%s could not be restored yet; %s within 15 seconds.", strings.Join(failed, " and "), self))
+	}
+	return alias + ": sound moved here", strings.Join(sentences, ". ")
 }
 
 // stableOrder keeps the addresses of order that are still in current, in
