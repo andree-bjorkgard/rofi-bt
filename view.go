@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -57,6 +58,12 @@ type action struct {
 // merge joins trusted devices by address. Order is as first seen (local, then
 // remote); presences are this machine first, then by machine name. here is the
 // name of this machine.
+// pairedHere keeps the devices paired on this computer: only those are in
+// the menu, with what the other machines report about them.
+func pairedHere(views []deviceView) []deviceView {
+	return slices.DeleteFunc(views, func(v deviceView) bool { return v.hereP() == nil })
+}
+
 func merge(here string, local []bluez.Device, remote []client.Device) []deviceView {
 	var order []string
 	byAddr := map[string]*deviceView{}
@@ -213,31 +220,35 @@ func (v deviceView) actions() []action {
 				Hint: "This computer lets go, the sound goes to " + m})
 		}
 	}
-	if !connHere && len(elsewhere) > 0 {
+	if here != nil && !connHere && len(elsewhere) > 0 {
 		acts = append(acts, action{Kind: actMoveHere, Label: "Move here",
 			Hint: "Disconnect on " + strings.Join(elsewhere, " and ") + ", then connect here"})
 	}
-	if !connHere && len(elsewhere) == 0 {
-		if here != nil {
+	// Connect or disconnect on every machine, this one first.
+	if here != nil {
+		if connHere {
+			a := action{Kind: actDisconnectHere, Label: "Disconnect here"}
+			if len(elsewhere) > 0 {
+				a.Hint = strings.Join(elsewhere, " and ") + " keeps them"
+			}
+			acts = append(acts, a)
+		} else {
 			acts = append(acts, action{Kind: actConnectHere, Label: "Connect here"})
 		}
-		for _, m := range v.others(func(presence) bool { return true }) {
+	}
+	for _, m := range v.others(func(presence) bool { return true }) {
+		if slices.Contains(elsewhere, m) {
+			var hint string
+			switch {
+			case connHere:
+				hint = "Only this computer keeps them"
+			case here != nil:
+				hint = "It stays paired on both"
+			}
+			acts = append(acts, action{Kind: actDisconnectOn, Machine: m, Label: "Disconnect on " + m, Hint: hint})
+		} else {
 			acts = append(acts, action{Kind: actConnectOn, Machine: m, Label: "Connect on " + m})
 		}
-	}
-	if connHere {
-		a := action{Kind: actDisconnectHere, Label: "Disconnect here"}
-		if len(elsewhere) > 0 {
-			a.Hint = strings.Join(elsewhere, " and ") + " keeps them"
-		}
-		acts = append(acts, a)
-	}
-	for _, m := range elsewhere {
-		hint := "It stays paired on both"
-		if connHere {
-			hint = "Only this computer keeps them"
-		}
-		acts = append(acts, action{Kind: actDisconnectOn, Machine: m, Label: "Disconnect on " + m, Hint: hint})
 	}
 	return append(acts, action{Kind: actBack, Label: "Back"})
 }

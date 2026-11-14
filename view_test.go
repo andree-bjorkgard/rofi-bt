@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/andree-bjorkgard/remote-bluetooth/v2/bluez"
@@ -98,8 +99,7 @@ func TestActions(t *testing.T) {
 			{"Back", ""},
 		}},
 		{"MX Vertical", []la{
-			{"Move here", "Disconnect on ingenting, then connect here"},
-			{"Disconnect on ingenting", "It stays paired on both"},
+			{"Disconnect on ingenting", ""},
 			{"Back", ""},
 		}},
 		{"MX Master 3S", []la{
@@ -116,9 +116,9 @@ func TestActions(t *testing.T) {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
 	}
-	// Kinds and machines.
+	// Kinds and machines. MX Vertical is not paired here, so no Move here.
 	acts := s["MX Vertical"].actions()
-	if acts[0].Kind != actMoveHere || acts[1].Kind != actDisconnectOn || acts[1].Machine != "ingenting" || acts[2].Kind != actBack {
+	if acts[0].Kind != actDisconnectOn || acts[0].Machine != "ingenting" || acts[1].Kind != actBack {
 		t.Errorf("kinds: %+v", acts)
 	}
 	// Connect on <m> when not connected anywhere and known on m.
@@ -195,5 +195,45 @@ func TestMergeTrustedOnlyStableOrder(t *testing.T) {
 	}
 	if c := got[2]; c.Alias != "c" {
 		t.Errorf("remote-only alias = %q", c.Alias)
+	}
+}
+
+// Connected only on the other machine but paired here: Move here, and
+// still a plain Connect here.
+func TestActionsConnectedElsewhere(t *testing.T) {
+	v := merge("laptop", []bluez.Device{dev("A", "MX", false, bluez.AudioNone)},
+		[]client.Device{rdev("ingenting", dev("A", "MX", true, bluez.AudioNone))})[0]
+	var got []string
+	for _, a := range v.actions() {
+		got = append(got, a.Label+" / "+a.Hint)
+	}
+	want := []string{
+		"Move here / Disconnect on ingenting, then connect here",
+		"Connect here / ",
+		"Disconnect on ingenting / It stays paired on both",
+		"Back / ",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	// Only paired over there: no Connect here, and no "paired on both".
+	v = merge("laptop", nil, []client.Device{rdev("ingenting", dev("A", "MX", true, bluez.AudioNone))})[0]
+	for _, a := range v.actions() {
+		if a.Kind == actConnectHere || a.Hint == "It stays paired on both" {
+			t.Errorf("unexpected %+v for a device only paired on ingenting", a)
+		}
+	}
+}
+
+func TestPairedHere(t *testing.T) {
+	views := merge("laptop",
+		[]bluez.Device{dev("A", "ATH", true, bluez.AudioNone)},
+		[]client.Device{
+			rdev("ingenting", dev("A", "ATH", true, bluez.AudioSending)),
+			rdev("ingenting", dev("B", "Only there", true, bluez.AudioNone)),
+		})
+	got := pairedHere(views)
+	if len(got) != 1 || got[0].Address != "A" || len(got[0].On) != 2 {
+		t.Errorf("got %+v, want only A, with ingenting's state merged in", got)
 	}
 }

@@ -203,7 +203,7 @@ func (m *menu) refresh() {
 	if m.remote != nil {
 		remote = m.remote.Devices()
 	}
-	views := merge(m.here, local, remote)
+	views := pairedHere(merge(m.here, local, remote))
 	m.views = make(map[string]deviceView, len(views))
 	addrs := make([]string, 0, len(views))
 	for _, v := range views {
