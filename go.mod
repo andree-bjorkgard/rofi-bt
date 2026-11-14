@@ -20,4 +20,4 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-replace github.com/andree-bjorkgard/remote-bluetooth/v2 => /home/andree/.config/oskestra/worktrees/remote-bluetooth/familiarize-yourself-with-this-project-t
+replace github.com/andree-bjorkgard/remote-bluetooth/v2 => ../remote-bluetooth
