@@ -10,7 +10,7 @@ require (
 )
 
 require (
-	github.com/andree-bjorkgard/remote-bluetooth/v2 v2.1.0
+	github.com/andree-bjorkgard/remote-bluetooth/v2 v2.1.1
 	github.com/godbus/dbus/v5 v5.2.4 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
