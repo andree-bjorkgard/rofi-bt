@@ -1,3 +1,5 @@
+github.com/andree-bjorkgard/remote-bluetooth/v2 v2.0.0 h1:NmttwO4RAtYykZCgAEHdJOliwbU7bcz+nTB1btveSII=
+github.com/andree-bjorkgard/remote-bluetooth/v2 v2.0.0/go.mod h1:gPuUelpLPjzZKaZPJ3VW+gLHpP4xuYyacN6n3/FBtck=
 github.com/andree-bjorkgard/rofi v0.3.0 h1:+RJw9CtX2nRE9Df8CvuhxPjN3LbkUeeFcQsNaLP7jXg=
 github.com/andree-bjorkgard/rofi v0.3.0/go.mod h1:1wiyZ10Cl0BK/HYh73oxluUsCZQcoHUtnH3F2BbuNKM=
 github.com/godbus/dbus/v5 v5.2.4 h1:F2gUCy++NMIxGmo9J+z5le/+ZC8W1OgeR51P4i9ZB/U=
