@@ -237,3 +237,25 @@ func TestPairedHere(t *testing.T) {
 		t.Errorf("got %+v, want only A, with ingenting's state merged in", got)
 	}
 }
+
+// A headset can stay with a machine that is connected but not playing and
+// ignore this one, so Play here is offered for an idle machine too, but not
+// while the sound already plays here.
+func TestPlayHereIdleElsewhere(t *testing.T) {
+	idle := merge("laptop",
+		[]bluez.Device{dev("A", "ATH", true, bluez.AudioIdle)},
+		[]client.Device{rdev("ingenting", dev("A", "ATH", true, bluez.AudioIdle))})[0]
+	acts := idle.actions()
+	if len(acts) == 0 || acts[0].Kind != actPlayHere || acts[0].Hint != "ingenting lets go, the sound comes here" {
+		t.Errorf("idle elsewhere: %+v", acts)
+	}
+
+	playingHere := merge("laptop",
+		[]bluez.Device{dev("A", "ATH", true, bluez.AudioSending)},
+		[]client.Device{rdev("ingenting", dev("A", "ATH", true, bluez.AudioIdle))})[0]
+	for _, a := range playingHere.actions() {
+		if a.Kind == actPlayHere {
+			t.Errorf("Play here offered while playing here: %+v", a)
+		}
+	}
+}

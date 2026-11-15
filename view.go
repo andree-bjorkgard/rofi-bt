@@ -156,6 +156,10 @@ func label(p presence) string {
 func connected(p presence) bool { return p.Dev.Connected }
 func sending(p presence) bool   { return p.Dev.Audio == bluez.AudioSending }
 
+// hasAudio is true while the machine has an audio transport to the device,
+// idle or sending.
+func hasAudio(p presence) bool { return p.Dev.Connected && p.Dev.Audio != bluez.AudioNone }
+
 // soundFrom is the "▶ Sound from …" text, empty when nothing is sending.
 func (v deviceView) soundFrom() string {
 	s := v.machines(sending)
@@ -210,9 +214,11 @@ func (v deviceView) actions() []action {
 	here := v.hereP()
 	connHere := v.connectedHere()
 	elsewhere := v.others(connected)
-	if s := v.others(sending); connHere && len(s) > 0 {
+	// Offered whenever another machine has audio to the device, playing or
+	// not: a headset can stay with an idle machine and ignore this one.
+	if h := v.others(hasAudio); connHere && len(h) > 0 && here.Dev.Audio != bluez.AudioSending {
 		acts = append(acts, action{Kind: actPlayHere, Label: "Play here",
-			Hint: strings.Join(s, " and ") + " lets go, the sound comes here"})
+			Hint: strings.Join(h, " and ") + " lets go, the sound comes here"})
 	}
 	if here != nil && here.Dev.Audio == bluez.AudioSending {
 		for _, m := range elsewhere {

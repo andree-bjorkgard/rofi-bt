@@ -322,7 +322,7 @@ func (m *menu) handle(ctx context.Context, sel rofi.Value, results chan<- result
 			m.errMsg = "Could not move the sound: " + errNoRemote.Error()
 			return true
 		}
-		m.busyAddr, m.busy, m.busyProgress = addr, action{Kind: actPlayHere, Label: "Play here"}, playHereProgress(v.others(sending))
+		m.busyAddr, m.busy, m.busyProgress = addr, action{Kind: actPlayHere, Label: "Play here"}, playHereProgress(v.others(hasAudio))
 		go func() {
 			r.play, r.err = playHere(ctx, remote, adapter, addr)
 			results <- r
